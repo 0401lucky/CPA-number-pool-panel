@@ -20,9 +20,14 @@ npm run dev
 - `POOL_CLI_BASE_URL` / `POOL_CLI_MANAGEMENT_KEY`
 - `POOL_CPA_BASE_URL` / `POOL_CPA_MANAGEMENT_KEY`
 - `SUB2API_BASE_URL` / `SUB2API_ADMIN_API_KEY`
+- `DASHBOARD_FRAME_ANCESTORS`
 - `DASHBOARD_TIMEZONE`
 - `DASHBOARD_REFRESH_SECONDS`
 - `UPSTREAM_TIMEOUT_MS`
+
+如果需要把看板嵌入到别的后台页面里，可以配置
+`DASHBOARD_FRAME_ANCESTORS`，填允许嵌入的来源域名，多个值可用空格或逗号分隔。
+项目也会自动把 `SUB2API_BASE_URL` 的源加入 `frame-ancestors` 白名单。
 
 `management key` 就是 `CLIProxyAPI` 管理页使用的密码，后端会通过
 `Authorization: Bearer <key>` 去访问 `/v0/management/*`。

@@ -2,7 +2,24 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { motion, AnimatePresence, Variants } from 'framer-motion';
-import { ExternalLink, Users, AlertCircle, Ban, Activity, Zap, FileDigit, XCircle, Clock, CheckCircle2, Server, Globe2, LayoutDashboard, Database, RefreshCcw } from 'lucide-react';
+import {
+  ExternalLink,
+  Users,
+  AlertCircle,
+  Ban,
+  Activity,
+  Zap,
+  FileDigit,
+  XCircle,
+  Clock,
+  CheckCircle2,
+  Server,
+  Globe2,
+  LayoutDashboard,
+  Database,
+  RefreshCcw
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 import { formatDateTime, formatRelativeTime } from '@/lib/dashboard/time';
 import type { DashboardOverview, DistributionSnapshot, PoolSnapshot, SourceStatus } from '@/lib/dashboard/types';
@@ -48,18 +65,20 @@ const itemVariants: Variants = {
 
 function AnimatedNumber({ value }: { value: string | number }) {
   return (
-    <AnimatePresence mode="popLayout" initial={false}>
-      <motion.span
-        key={value}
-        initial={{ opacity: 0, y: -15, filter: 'blur(4px)' }}
-        animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-        exit={{ opacity: 0, y: 15, filter: 'blur(4px)', position: 'absolute' }}
-        transition={{ duration: 0.3 }}
-        style={{ display: 'inline-block' }}
-      >
-        {value}
-      </motion.span>
-    </AnimatePresence>
+    <span className="metric-number-stack">
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span
+          key={value}
+          className="metric-number-layer"
+          initial={{ opacity: 0, y: -15, filter: 'blur(4px)' }}
+          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+          exit={{ opacity: 0, y: 15, filter: 'blur(4px)', position: 'absolute', inset: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          {value}
+        </motion.span>
+      </AnimatePresence>
+    </span>
   );
 }
 
@@ -74,15 +93,17 @@ function MetricCard({
   value: string;
   note: string;
   tone?: 'neutral' | 'good' | 'bad' | 'warn';
-  icon?: any;
+  icon?: LucideIcon;
 }) {
+  const isLongValue = value.length >= 10;
+
   return (
     <motion.article variants={itemVariants} className={`metric-card metric-${tone}`}>
       <div className="metric-label-container">
         {Icon && <Icon className="metric-label-icon" size={16} />}
         <span className="metric-label">{label}</span>
       </div>
-      <strong className="metric-value">
+      <strong className={`metric-value${isLongValue ? ' compact' : ''}`}>
         <AnimatedNumber value={value} />
       </strong>
       <span className="metric-note">{note}</span>
@@ -244,7 +265,7 @@ function DistributionPanel({
   );
 }
 
-function SourceRail({ sources, timezone }: { sources: SourceStatus[]; timezone: string }) {
+function SourceRail({ sources }: { sources: SourceStatus[] }) {
   return (
     <motion.section variants={containerVariants} initial="hidden" animate="show" className="source-rail">
       {sources.map((source) => (
@@ -252,7 +273,7 @@ function SourceRail({ sources, timezone }: { sources: SourceStatus[]; timezone: 
           <div className="source-card-head">
             <span>{source.label}</span>
             <span className="source-state">
-              {source.stale ? 'stale' : source.ok ? 'fresh' : source.configured ? 'error' : 'idle'}
+              {source.stale ? '缓存' : source.ok ? '实时' : source.configured ? '异常' : '待接入'}
             </span>
           </div>
           <p>{source.message}</p>
@@ -260,7 +281,7 @@ function SourceRail({ sources, timezone }: { sources: SourceStatus[]; timezone: 
             <RefreshCcw size={12} />
             {source.lastSuccessAt
               ? `最近成功 ${formatRelativeTime(source.lastSuccessAt)}`
-              : `最近成功 ${formatDateTime(source.lastSuccessAt, timezone)}`}
+              : '从未成功'}
           </span>
         </motion.article>
       ))}
@@ -271,7 +292,11 @@ function SourceRail({ sources, timezone }: { sources: SourceStatus[]; timezone: 
 export function LiveDashboard({ initialData }: { initialData: DashboardOverview }) {
   const [data, setData] = useState(initialData);
   const [countdown, setCountdown] = useState(initialData.refreshSeconds);
-  const [banner, setBanner] = useState('');
+  const [banner, setBanner] = useState(
+    initialData.hasDegradedSources
+      ? '部分来源拉取失败，当前混合展示实时数据和缓存快照。'
+      : ''
+  );
   const [isPending, startTransition] = useTransition();
   const timerRef = useRef<number | null>(null);
   const refreshRef = useRef<() => Promise<void>>(async () => {});
@@ -279,6 +304,11 @@ export function LiveDashboard({ initialData }: { initialData: DashboardOverview 
   useEffect(() => {
     setData(initialData);
     setCountdown(initialData.refreshSeconds);
+    setBanner(
+      initialData.hasDegradedSources
+        ? '部分来源拉取失败，当前混合展示实时数据和缓存快照。'
+        : ''
+    );
   }, [initialData]);
 
   const heroCards = useMemo(
@@ -325,7 +355,11 @@ export function LiveDashboard({ initialData }: { initialData: DashboardOverview 
       const payload = (await response.json()) as DashboardOverview;
       startTransition(() => {
         setData(payload);
-        setBanner(payload.hasFreshData ? '' : '当前展示的是部分缓存快照。');
+        setBanner(
+          payload.hasDegradedSources
+            ? '部分来源拉取失败，当前混合展示实时数据和缓存快照。'
+            : ''
+        );
       });
       setCountdown(payload.refreshSeconds);
     } catch (error) {
@@ -376,7 +410,7 @@ export function LiveDashboard({ initialData }: { initialData: DashboardOverview 
         <div className="hero-side">
           <div className="live-badge">
             <span className={`live-dot ${isPending ? 'pending' : ''}`} />
-            {data.hasFreshData ? '实时中' : '缓存中'}
+            {data.hasDegradedSources ? '部分缓存' : data.hasFreshData ? '实时中' : '缓存中'}
           </div>
           <div className="hero-meta">
             <span><Globe2 size={12} /> 时区：{data.timezone}</span>
@@ -458,7 +492,7 @@ export function LiveDashboard({ initialData }: { initialData: DashboardOverview 
           </p>
           <h2>上游状态轨道</h2>
         </div>
-        <SourceRail sources={data.sources} timezone={data.timezone} />
+        <SourceRail sources={data.sources} />
       </motion.section>
     </main>
   );

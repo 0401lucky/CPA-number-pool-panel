@@ -78,10 +78,24 @@ function updateDistributionStatus(
   };
 }
 
+function isCacheEntryReusable(entry: CacheEntry<unknown> | undefined, maxStaleAgeMs: number): boolean {
+  if (!entry) {
+    return false;
+  }
+
+  const lastSuccessAtMs = Date.parse(entry.lastSuccessAt);
+  if (!Number.isFinite(lastSuccessAtMs)) {
+    return false;
+  }
+
+  return Date.now() - lastSuccessAtMs <= maxStaleAgeMs;
+}
+
 async function resolvePoolSource(
   source: PoolSourceDefinition,
   timeZone: string,
-  timeoutMs: number
+  timeoutMs: number,
+  maxStaleAgeMs: number
 ): Promise<PoolSnapshot> {
   const cached = sourceCache.get(source.id) as CacheEntry<PoolSnapshot> | undefined;
 
@@ -102,14 +116,32 @@ async function resolvePoolSource(
     return nextSnapshot;
   } catch (error) {
     const message = error instanceof Error ? error.message : '未知错误';
-    if (cached) {
-      return updatePoolStatus(clonePoolSnapshot(cached.snapshot), {
+    if (cached && isCacheEntryReusable(cached, maxStaleAgeMs)) {
+      const reusableCache = cached;
+      return updatePoolStatus(clonePoolSnapshot(reusableCache.snapshot), {
         configured: true,
         ok: false,
         stale: true,
-        lastSuccessAt: cached.lastSuccessAt,
+        lastSuccessAt: reusableCache.lastSuccessAt,
         message: `拉取失败，已回退缓存：${message}`
       });
+    }
+
+    if (cached) {
+      return {
+        ...createUnavailablePool(source.id, source.label, `拉取失败，最近缓存已过期：${message}`),
+        managementUrl: source.managementUrl,
+        status: {
+          sourceId: source.id,
+          label: source.label,
+          kind: 'pool',
+          configured: true,
+          ok: false,
+          stale: false,
+          lastSuccessAt: cached.lastSuccessAt,
+          message: `拉取失败，最近缓存已过期：${message}`
+        }
+      };
     }
 
     return {
@@ -132,7 +164,8 @@ async function resolvePoolSource(
 async function resolveDistributionSource(
   source: DistributionSourceDefinition,
   timeZone: string,
-  timeoutMs: number
+  timeoutMs: number,
+  maxStaleAgeMs: number
 ): Promise<DistributionSnapshot> {
   const cached = sourceCache.get(source.id) as CacheEntry<DistributionSnapshot> | undefined;
 
@@ -153,14 +186,25 @@ async function resolveDistributionSource(
     return nextSnapshot;
   } catch (error) {
     const message = error instanceof Error ? error.message : '未知错误';
-    if (cached) {
-      return updateDistributionStatus(cloneDistributionSnapshot(cached.snapshot), {
+    if (cached && isCacheEntryReusable(cached, maxStaleAgeMs)) {
+      const reusableCache = cached;
+      return updateDistributionStatus(cloneDistributionSnapshot(reusableCache.snapshot), {
         configured: true,
         ok: false,
         stale: true,
-        lastSuccessAt: cached.lastSuccessAt,
+        lastSuccessAt: reusableCache.lastSuccessAt,
         message: `拉取失败，已回退缓存：${message}`
       });
+    }
+
+    if (cached) {
+      return updateDistributionStatus(
+        createUnavailableDistribution(source.label, `拉取失败，最近缓存已过期：${message}`),
+        {
+          configured: true,
+          lastSuccessAt: cached.lastSuccessAt
+        }
+      );
     }
 
     return updateDistributionStatus(
@@ -174,11 +218,17 @@ async function resolveDistributionSource(
 
 async function buildDashboardOverview(): Promise<DashboardOverview> {
   const runtime = getDashboardRuntimeConfig();
+  const maxStaleAgeMs = Math.max(runtime.refreshSeconds * 3 * 1000, 30_000);
   const resolvedPools =
     runtime.pools.length > 0
       ? await Promise.all(
           runtime.pools.map((source) =>
-            resolvePoolSource(source, runtime.timezone, runtime.upstreamTimeoutMs)
+            resolvePoolSource(
+              source,
+              runtime.timezone,
+              runtime.upstreamTimeoutMs,
+              maxStaleAgeMs
+            )
           )
         )
       : [];
@@ -196,14 +246,17 @@ async function buildDashboardOverview(): Promise<DashboardOverview> {
     ? await resolveDistributionSource(
         runtime.distribution,
         runtime.timezone,
-        runtime.upstreamTimeoutMs
+        runtime.upstreamTimeoutMs,
+        maxStaleAgeMs
       )
     : createUnavailableDistribution('sub2api 分发', '等待补充 sub2api 配置');
 
   const sources = [...pools.map((pool) => pool.status), distribution.status];
   const summary = summarizePoolFleet(pools);
   const hasAnyData = pools.some((pool) => pool.available) || distribution.available;
-  const hasFreshData = sources.some((source) => source.ok && !source.stale);
+  const configuredSources = sources.filter((source) => source.configured);
+  const hasFreshData = configuredSources.some((source) => source.ok && !source.stale);
+  const hasDegradedSources = configuredSources.some((source) => source.stale || !source.ok);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -211,6 +264,7 @@ async function buildDashboardOverview(): Promise<DashboardOverview> {
     refreshSeconds: runtime.refreshSeconds,
     hasAnyData,
     hasFreshData,
+    hasDegradedSources,
     summary,
     pools,
     distribution,

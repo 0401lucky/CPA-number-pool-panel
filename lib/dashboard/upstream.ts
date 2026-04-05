@@ -173,14 +173,15 @@ async function fetchSub2apiUsagePage(
   page: number,
   pageSize: number,
   startDate: string,
-  endDate: string
+  endDate: string,
+  timeZone: string
 ) {
   const query = new URLSearchParams({
     page: String(page),
     page_size: String(pageSize),
     start_date: startDate,
     end_date: endDate,
-    timezone: 'UTC',
+    timezone: timeZone,
     exact_total: 'true'
   });
 
@@ -207,24 +208,33 @@ export async function fetchDistributionSnapshot(
     1,
     pageSize,
     startDate,
-    endDate
+    endDate,
+    timeZone
   );
   const firstPage = mapSub2apiUsageItems(firstPayload);
-  const followUps =
-    firstPage.pages > 1
-      ? await Promise.all(
-          Array.from({ length: firstPage.pages - 1 }, (_, index) =>
-            fetchSub2apiUsagePage(
-              source,
-              timeoutMs,
-              index + 2,
-              pageSize,
-              startDate,
-              endDate
-            )
-          )
+  const followUps: unknown[] = [];
+
+  // 分批抓后续页，避免在高流量时一次性打满上游接口导致超时。
+  for (let page = 2; page <= firstPage.pages; page += 4) {
+    const batchPageNumbers = Array.from(
+      { length: Math.min(4, firstPage.pages - page + 1) },
+      (_, index) => page + index
+    );
+    const payloads = await Promise.all(
+      batchPageNumbers.map((pageNumber) =>
+        fetchSub2apiUsagePage(
+          source,
+          timeoutMs,
+          pageNumber,
+          pageSize,
+          startDate,
+          endDate,
+          timeZone
         )
-      : [];
+      )
+    );
+    followUps.push(...payloads);
+  }
 
   const items = [...firstPage.items];
   for (const payload of followUps) {

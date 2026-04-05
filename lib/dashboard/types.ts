@@ -62,6 +62,7 @@ export interface DashboardOverview {
   refreshSeconds: number;
   hasAnyData: boolean;
   hasFreshData: boolean;
+  hasDegradedSources: boolean;
   summary: SummaryMetrics;
   pools: PoolSnapshot[];
   distribution: DistributionSnapshot;
